@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-Hans" data-mode="edit" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" id="themeColor" />
+    <title>Markdown Render</title>
+
+    <!-- Third-party libs via CDN (no frameworks) -->
+    <link
+      id="hljsTheme"
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css"
+    />
+
+    <link rel="stylesheet" href="assets/styles.css" />
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.0.9/dist/purify.min.js"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"
+    ></script>
+  </head>
+  <body>
+    <header class="toolbar" role="banner">
+      <div class="toolbar__title" aria-label="应用标题">Markdown Render</div>
+      <div class="toolbar__actions" role="toolbar" aria-label="工具栏">
+        <button id="btnEdit" class="btn" type="button">编辑</button>
+        <button id="btnPreview" class="btn" type="button">预览</button>
+        <button id="btnExport" class="btn btn--primary" type="button">导出 PNG</button>
+        <button id="btnSettings" class="btn btn--ghost" type="button" aria-haspopup="dialog">
+          设置
+        </button>
+      </div>
+    </header>
+
+    <main class="main" role="main">
+      <section id="editorPane" class="pane pane--editor" aria-label="编辑区">
+        <div class="pane__bar">
+          <label class="file-btn">
+            导入 .md
+            <input id="fileInput" type="file" accept=".md,text/markdown,text/plain" />
+          </label>
+          <span class="hint" id="editHint">支持粘贴/输入；桌面端支持拖拽 .md</span>
+        </div>
+        <textarea
+          id="editor"
+          class="editor"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          autocorrect="off"
+          placeholder="在这里输入或粘贴 Markdown..."
+        ></textarea>
+      </section>
+
+      <section id="previewPane" class="pane pane--preview" aria-label="预览区">
+        <article id="preview" class="markdown-body" aria-label="渲染预览"></article>
+      </section>
+    </main>
+
+    <div id="dropOverlay" class="drop-overlay" hidden>
+      <div class="drop-overlay__card">
+        <div class="drop-overlay__title">松开以导入 .md 文件</div>
+        <div class="drop-overlay__sub">将内容载入编辑器并更新预览</div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+    <dialog id="settingsDialog" class="dialog">
+      <form method="dialog" class="dialog__content">
+        <header class="dialog__header">
+          <h2 class="dialog__title">设置</h2>
+          <button class="btn btn--ghost" value="close" aria-label="关闭" type="submit">关闭</button>
+        </header>
+        <div class="dialog__body">
+          <section class="settings__group" aria-label="主题">
+            <h3 class="settings__title">主题</h3>
+            <div class="segmented" role="radiogroup" aria-label="主题选择">
+              <label class="segmented__item">
+                <input id="themeLight" type="radio" name="theme" value="light" />
+                <span>浅色</span>
+              </label>
+              <label class="segmented__item">
+                <input id="themeDark" type="radio" name="theme" value="dark" />
+                <span>深色</span>
+              </label>
+            </div>
+            <p class="muted">主题会影响预览与导出 PNG 的配色。</p>
+          </section>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="assets/app.js"></script>
+  </body>
+</html>
