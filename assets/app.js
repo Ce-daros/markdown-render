@@ -160,11 +160,24 @@ function renderIfNeeded({ force }) {
   const t0 = performance.now();
   const html = renderMarkdownToHtml(state.markdownText);
   dom.preview.innerHTML = html;
+  wrapTables(dom.preview);
   if (DEFAULTS.features.highlight) applyHighlight(dom.preview);
   state.dirty = false;
 
   const ms = Math.round(performance.now() - t0);
   if (ms > 80) showToast(`已渲染（${ms}ms）`, { durationMs: 900 });
+}
+
+function wrapTables(root) {
+  const tables = Array.from(root.querySelectorAll("table"));
+  for (const table of tables) {
+    const parent = table.parentElement;
+    if (parent && parent.classList.contains("table-wrap")) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    table.replaceWith(wrap);
+    wrap.appendChild(table);
+  }
 }
 
 function renderMarkdownToHtml(markdownText) {
@@ -458,11 +471,13 @@ async function exportPng() {
     renderIfNeeded({ force: false });
 
     showToast("正在生成 PNG…", { durationMs: 1800 });
-    const canvas = await renderPreviewToCanvas();
-    const blob = await canvasToBlob(canvas, "image/png");
-    const name = `markdown_${timestamp()}.png`;
-    await downloadBlob(blob, name);
-    showToast(`已导出：${name}`, { durationMs: 1600 });
+    const baseName = `markdown_${timestamp()}`;
+    const files = await exportPreviewToPngFiles(baseName);
+    if (files.length === 1) {
+      showToast(`已导出：${files[0]}`, { durationMs: 1600 });
+    } else {
+      showToast(`已导出：${files.length} 张 PNG`, { durationMs: 1800 });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     showToast(`导出失败：${msg}`, { durationMs: 2600 });
@@ -473,7 +488,7 @@ async function exportPng() {
   }
 }
 
-async function renderPreviewToCanvas() {
+async function exportPreviewToPngFiles(baseName) {
   if (!window.html2canvas) throw new Error("html2canvas 未加载");
 
   const exportWidth = Math.min(DEFAULTS.export.maxWidthPx, dom.previewPane.clientWidth || 720);
@@ -492,58 +507,192 @@ async function renderPreviewToCanvas() {
 
     const width = root.scrollWidth;
     const height = root.scrollHeight;
-    const scale =
+    if (!width || !height) throw new Error("没有可导出的内容");
+
+    const scaleHint =
       DEFAULTS.export.scale ??
       Math.max(1, Math.min(2, Math.round((window.devicePixelRatio || 1) * 10) / 10));
 
-    const scaledWidth = Math.floor(width * scale);
-    const scaledHeight = Math.floor(height * scale);
-    const MAX_DIM = 32767;
+    const MAX_DIM = getCanvasMaxDim();
     const MAX_AREA = 50_000_000;
+    const MIN_SINGLE_SCALE = 0.5;
 
-    if (scaledWidth > MAX_DIM || scaledHeight > MAX_DIM) {
-      throw new Error("内容过长/过宽，超出浏览器画布限制；请缩短内容或降低导出宽度/倍率");
-    }
-    if (scaledWidth * scaledHeight > MAX_AREA) {
-      throw new Error("图片像素过大，可能导致内存不足；请降低导出宽度/倍率或缩短内容");
-    }
-
-    const full = document.createElement("canvas");
-    full.width = scaledWidth;
-    full.height = scaledHeight;
-    const ctx = full.getContext("2d");
-    if (!ctx) throw new Error("无法创建画布上下文");
-
-    const maxTileScaledH = 4096;
-    const tileCssH = Math.max(256, Math.floor(maxTileScaledH / scale));
     const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#ffffff";
-    let y = 0;
-    let destY = 0;
 
-    while (y < height) {
-      const h = Math.min(tileCssH, height - y);
-      const tileCanvas = await window.html2canvas(root, {
-        backgroundColor: bg,
-        scale,
-        useCORS: true,
-        allowTaint: false,
-        width,
-        height: h,
-        x: 0,
-        y,
-        windowWidth: width,
-        windowHeight: h,
-      });
-
-      ctx.drawImage(tileCanvas, 0, destY);
-      destY += tileCanvas.height;
-      y += h;
+    const singleScale = pickScaleForSingleCanvas({ width, height, scaleHint, maxDim: MAX_DIM, maxArea: MAX_AREA });
+    if (singleScale !== null && singleScale >= MIN_SINGLE_SCALE) {
+      if (singleScale !== scaleHint) {
+        showToast(`内容较长，已自动将倍率调整为 ${singleScale}×`, { durationMs: 1600 });
+      }
+      const canvas = await renderRootToCanvas(root, { width, height, scale: singleScale, bg });
+      const blob = await canvasToBlob(canvas, "image/png");
+      const filename = `${baseName}.png`;
+      await downloadBlob(blob, filename);
+      return [filename];
     }
 
-    return full;
+    const scaleForParts = clampScaleForTiles({ width, scaleHint, maxDim: MAX_DIM });
+    return await exportRootToPngParts(root, {
+      width,
+      height,
+      scale: scaleForParts,
+      bg,
+      baseName,
+      maxArea: MAX_AREA,
+    });
   } finally {
     root.remove();
   }
+}
+
+let cachedCanvasMaxDim = /** @type {number | null} */ (null);
+function getCanvasMaxDim() {
+  if (cachedCanvasMaxDim !== null) return cachedCanvasMaxDim;
+  const MAX_PROBE = 32767;
+  const canvas = document.createElement("canvas");
+
+  const canSet = (w, h) => {
+    try {
+      canvas.width = w;
+      canvas.height = h;
+      return canvas.width === w && canvas.height === h;
+    } catch {
+      return false;
+    }
+  };
+
+  const maxW = binarySearchMaxDim((n) => canSet(n, 1), MAX_PROBE);
+  const maxH = binarySearchMaxDim((n) => canSet(1, n), MAX_PROBE);
+  cachedCanvasMaxDim = Math.min(maxW, maxH);
+  return cachedCanvasMaxDim;
+}
+
+function binarySearchMaxDim(can, hi) {
+  let lo = 1;
+  let high = Math.max(1, Math.floor(hi));
+  while (lo < high) {
+    const mid = Math.ceil((lo + high) / 2);
+    if (can(mid)) lo = mid;
+    else high = mid - 1;
+  }
+  return lo;
+}
+
+function pickScaleForSingleCanvas({ width, height, scaleHint, maxDim, maxArea }) {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const safeHeight = Math.max(1, Math.floor(height));
+  const safeScaleHint = Math.max(0.1, scaleHint);
+
+  const maxScaleByDim = Math.min(maxDim / safeWidth, maxDim / safeHeight);
+  const maxScaleByArea = Math.sqrt(maxArea / (safeWidth * safeHeight));
+  const maxAllowed = Math.min(maxScaleByDim, maxScaleByArea);
+  if (!Number.isFinite(maxAllowed) || maxAllowed <= 0) return null;
+
+  // Prefer the largest possible scale while staying within limits.
+  const safe = Math.min(safeScaleHint, Math.floor(maxAllowed * 100) / 100);
+  if (!Number.isFinite(safe) || safe <= 0) return null;
+
+  const scaledWidth = Math.floor(safeWidth * safe);
+  const scaledHeight = Math.floor(safeHeight * safe);
+  if (scaledWidth <= 0 || scaledHeight <= 0) return null;
+  if (scaledWidth > maxDim || scaledHeight > maxDim) return null;
+  if (scaledWidth * scaledHeight > maxArea) return null;
+
+  return safe;
+}
+
+function clampScaleForTiles({ width, scaleHint, maxDim }) {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const safeScaleHint = Math.max(0.1, scaleHint);
+  const maxScaleByWidth = maxDim / safeWidth;
+  const maxAllowed = Math.min(safeScaleHint, maxScaleByWidth);
+  const safe = Math.floor(maxAllowed * 100) / 100;
+  return Math.max(0.1, safe);
+}
+
+async function renderRootToCanvas(root, { width, height, scale, bg }) {
+  const scaledWidth = Math.floor(width * scale);
+  const scaledHeight = Math.floor(height * scale);
+  if (scaledWidth <= 0 || scaledHeight <= 0) throw new Error("内容尺寸异常，无法导出");
+
+  const full = document.createElement("canvas");
+  full.width = scaledWidth;
+  full.height = scaledHeight;
+  const ctx = full.getContext("2d");
+  if (!ctx) throw new Error("无法创建画布上下文");
+
+  const maxTileScaledH = 4096;
+  const tileCssH = Math.max(1, Math.floor(maxTileScaledH / scale));
+  let y = 0;
+  let destY = 0;
+
+  while (y < height) {
+    const h = Math.min(tileCssH, height - y);
+    const tileCanvas = await window.html2canvas(root, {
+      backgroundColor: bg,
+      scale,
+      useCORS: true,
+      allowTaint: false,
+      width,
+      height: h,
+      x: 0,
+      y,
+      windowWidth: width,
+      windowHeight: h,
+    });
+
+    ctx.drawImage(tileCanvas, 0, destY);
+    destY += tileCanvas.height;
+    y += h;
+  }
+
+  return full;
+}
+
+async function exportRootToPngParts(root, { width, height, scale, bg, baseName, maxArea }) {
+  const scaledWidth = Math.floor(width * scale);
+  if (scaledWidth <= 0) throw new Error("内容尺寸异常，无法导出");
+
+  const maxTileScaledHBase = 4096;
+  const maxTileScaledHByArea = Math.max(1, Math.floor(maxArea / scaledWidth));
+  const maxTileScaledH = Math.max(1, Math.min(maxTileScaledHBase, maxTileScaledHByArea));
+  const tileCssH = Math.max(1, Math.floor(maxTileScaledH / scale));
+
+  const total = Math.max(1, Math.ceil(height / tileCssH));
+  const pad = String(total).length;
+  showToast(`内容过长，将分 ${total} 张导出…`, { durationMs: 2200 });
+
+  const files = [];
+  let y = 0;
+  let i = 1;
+
+  while (y < height) {
+    const h = Math.min(tileCssH, height - y);
+    showToast(`正在导出（${i}/${total}）…`, { durationMs: 1800 });
+
+    const tileCanvas = await window.html2canvas(root, {
+      backgroundColor: bg,
+      scale,
+      useCORS: true,
+      allowTaint: false,
+      width,
+      height: h,
+      x: 0,
+      y,
+      windowWidth: width,
+      windowHeight: h,
+    });
+
+    const blob = await canvasToBlob(tileCanvas, "image/png");
+    const filename = `${baseName}_p${String(i).padStart(pad, "0")}.png`;
+    await downloadBlob(blob, filename);
+    files.push(filename);
+
+    y += h;
+    i += 1;
+  }
+
+  return files;
 }
 
 function canvasToBlob(canvas, type) {

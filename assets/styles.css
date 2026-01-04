@@ -380,14 +380,21 @@ html[data-mode="preview"] .pane--preview {
   background: transparent;
 }
 
-.markdown-body table {
+.markdown-body .table-wrap {
+  margin: 0.8em 0;
   width: 100%;
-  border-collapse: collapse;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
-  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
 }
 
 .markdown-body table thead {
@@ -619,4 +626,10 @@ html[data-mode="preview"] .pane--preview {
 .export-root .markdown-body {
   max-width: none;
   margin: 0;
+}
+
+.export-root .table-wrap {
+  width: max-content;
+  max-width: none;
+  overflow: visible;
 }
